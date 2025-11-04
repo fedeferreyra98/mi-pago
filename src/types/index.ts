@@ -129,3 +129,52 @@ export interface JWTPayload {
   iat?: number;
   exp?: number;
 }
+
+export enum TransferStatus {
+  PENDIENTE = 'pendiente',
+  EN_PROCESO = 'en_proceso',
+  ACREDITADA = 'acreditada',
+  FALLIDA = 'fallida',
+}
+
+export interface Transfer {
+  id_transferencia: string;
+  usuario_id_origen: string;
+  usuario_id_destino?: string;
+  cbu_destino?: string;
+  monto: number;
+  referencia?: string;
+  estado: TransferStatus;
+  comprobante_json?: Record<string, any>;
+  fecha_creacion: Date;
+  fecha_acreditacion?: Date;
+  fecha_actualizacion?: Date;
+}
+
+export interface Comprobante {
+  id_comprobante: string;
+  id_transferencia: string;
+  numero_comprobante: string;
+  fecha_hora: Date;
+  monto: number;
+  destinatario_alias?: string;
+  destinatario_cbu?: string;
+  estado: TransferStatus;
+  pdf_url?: string;
+  estado_descarga: 'generado' | 'disponible' | 'expirado';
+  fecha_expiracion?: Date;
+  fecha_creacion: Date;
+}
+
+export interface ComprobanteDetail {
+  numero_comprobante: string;
+  fecha_hora: Date;
+  monto: number;
+  remitente_alias: string;
+  destinatario_alias?: string;
+  destinatario_cbu?: string;
+  referencia?: string;
+  estado: TransferStatus;
+  compartible: boolean;
+  descargable: boolean;
+}

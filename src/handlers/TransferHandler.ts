@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import UserAccountsService from '@/services/UserAccountsService.js';
 import CreditsService from '@/services/CreditsService.js';
 import BankingAPI from '@/services/BankingAPI.js';
+import TransfersService from '@/services/TransfersService.js';
 import { CreditType } from '@/types/index.js';
 import { ValidationError, InsufficientFundsError } from '@/errors/AppError.js';
 
@@ -9,6 +10,7 @@ export class TransferHandler {
   private userAccountsService = UserAccountsService;
   private creditsService = CreditsService;
   private bankingAPI = BankingAPI;
+  private transfersService = TransfersService;
 
   /**
    * Handle transfer request with automatic quick credit offer if balance insufficient
@@ -166,6 +168,143 @@ export class TransferHandler {
       }
 
       res.json(analysis);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/transfers/:id_transferencia
+   * Get transfer detail with receipt information
+   */
+  async getTransferDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id_transferencia } = req.params;
+      const { usuario_id } = req.body;
+
+      if (!id_transferencia || !usuario_id) {
+        throw new ValidationError('Missing required fields: id_transferencia, usuario_id');
+      }
+
+      const transfer = await this.transfersService.getTransferDetail(id_transferencia, usuario_id);
+
+      res.json({
+        exito: true,
+        transferencia: transfer,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/transfers/:id_transferencia/comprobante
+   * Get receipt for a transfer
+   */
+  async getComprobanteDetail(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id_transferencia } = req.params;
+      const { usuario_id } = req.body;
+
+      if (!id_transferencia || !usuario_id) {
+        throw new ValidationError('Missing required fields: id_transferencia, usuario_id');
+      }
+
+      const comprobanteDetail = await this.transfersService.getComprobanteDetail(
+        id_transferencia,
+        usuario_id
+      );
+
+      res.json({
+        exito: true,
+        comprobante: comprobanteDetail,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/transfers/:id_transferencia/comprobante/download
+   * Generate PDF download link for receipt
+   */
+  async generatePdfDownload(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id_transferencia } = req.params;
+      const { usuario_id } = req.body;
+
+      if (!id_transferencia || !usuario_id) {
+        throw new ValidationError('Missing required fields: id_transferencia, usuario_id');
+      }
+
+      const downloadUrl = await this.transfersService.getDownloadLink(id_transferencia, usuario_id);
+
+      res.json({
+        exito: true,
+        descarga_url: downloadUrl,
+        fecha_expiracion: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        mensaje: 'Link available for 24 hours',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/transfers/:id_transferencia/comprobante/share
+   * Get shareable link for receipt
+   */
+  async getShareableLink(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { id_transferencia } = req.params;
+      const { usuario_id } = req.body;
+
+      if (!id_transferencia || !usuario_id) {
+        throw new ValidationError('Missing required fields: id_transferencia, usuario_id');
+      }
+
+      const shareUrl = await this.transfersService.shareComprobante(id_transferencia, usuario_id);
+
+      res.json({
+        exito: true,
+        compartir_url: shareUrl,
+        valido_por_dias: 7,
+        mensaje: 'Share this link with others',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/transfers/user/:usuario_id/receipts
+   * List user's transfer receipts
+   */
+  async getUserReceipts(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { usuario_id } = req.params;
+      const { limit = '20', offset = '0' } = req.query;
+
+      if (!usuario_id) {
+        throw new ValidationError('Missing required field: usuario_id');
+      }
+
+      const limitNum = Math.min(parseInt(limit as string) || 20, 100);
+      const offsetNum = parseInt(offset as string) || 0;
+
+      const comprobantes = await this.transfersService.getUserComprobantesList(
+        usuario_id,
+        limitNum,
+        offsetNum
+      );
+
+      res.json({
+        exito: true,
+        comprobantes,
+        total: comprobantes.length,
+        limite: limitNum,
+        offset: offsetNum,
+      });
     } catch (error) {
       next(error);
     }

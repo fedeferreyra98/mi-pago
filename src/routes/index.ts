@@ -73,12 +73,29 @@ router.get('/credits/:id_credito/detail', CreditsHandler.getCreditDetail.bind(Cr
 // ============================================================
 // TRANSFER ROUTES
 // ============================================================
+// Transfer execution
 router.post('/transfers/analyze', TransferHandler.analyzeTransfer.bind(TransferHandler));
 router.post('/transfers/execute', TransferHandler.handleTransfer.bind(TransferHandler));
 router.post(
   '/transfers/execute-with-credit',
   TransferHandler.confirmTransferWithCredit.bind(TransferHandler)
 );
+
+// Transfer receipts (comprobantes)
+router.get('/transfers/:id_transferencia', TransferHandler.getTransferDetail.bind(TransferHandler));
+router.get(
+  '/transfers/:id_transferencia/comprobante',
+  TransferHandler.getComprobanteDetail.bind(TransferHandler)
+);
+router.post(
+  '/transfers/:id_transferencia/comprobante/download',
+  TransferHandler.generatePdfDownload.bind(TransferHandler)
+);
+router.post(
+  '/transfers/:id_transferencia/comprobante/share',
+  TransferHandler.getShareableLink.bind(TransferHandler)
+);
+router.get('/transfers/user/:usuario_id/receipts', TransferHandler.getUserReceipts.bind(TransferHandler));
 
 // ============================================================
 // AUTHENTICATION ROUTES (Mock)
