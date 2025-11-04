@@ -80,13 +80,13 @@ export class CreditsHandler {
         CreditType.QUICK
       );
       if (!amountValidation.es_elegible) {
-        throw new ValidationError(amountValidation.razon_rechazo);
+        throw new ValidationError(amountValidation.razon_rechazo!);
       }
 
       // Validate term
       const termValidation = await this.creditsValidator.validateTerm(plazo_dias, CreditType.QUICK);
       if (!termValidation.es_elegible) {
-        throw new ValidationError(termValidation.razon_rechazo);
+        throw new ValidationError(termValidation.razon_rechazo!);
       }
 
       const simulation = await this.creditsService.simulateQuickCredit(
@@ -123,13 +123,13 @@ export class CreditsHandler {
         CreditType.NORMAL
       );
       if (!amountValidation.es_elegible) {
-        throw new ValidationError(amountValidation.razon_rechazo);
+        throw new ValidationError(amountValidation.razon_rechazo!);
       }
 
       // Validate term
       const termValidation = await this.creditsValidator.validateTerm(plazo_meses, CreditType.NORMAL);
       if (!termValidation.es_elegible) {
-        throw new ValidationError(termValidation.razon_rechazo);
+        throw new ValidationError(termValidation.razon_rechazo!);
       }
 
       const simulation = await this.creditsService.simulateNormalCredit(
