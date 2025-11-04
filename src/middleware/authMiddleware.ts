@@ -49,8 +49,8 @@ export const generateToken = (usuarioId: string, expiresIn: string = config.jwt.
     {
       usuario_id: usuarioId,
     },
-    config.jwt.secret,
-    { expiresIn }
+    config.jwt.secret as jwt.Secret,
+    { expiresIn } as jwt.SignOptions
   );
 };
 
