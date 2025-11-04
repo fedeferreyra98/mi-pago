@@ -1,4 +1,4 @@
-import { Credit, CreditType, CreditStatus, CreditCalculation, InstallmentPlan, CreditSimulation, CreditRequest } from '@/types/index.js';
+import { Credit, CreditType, CreditStatus, CreditCalculation, InstallmentPlan, CreditSimulation, CreditRequest, InstallmentStatus } from '@/types/index.js';
 import { config } from '@/config/config.js';
 import CreditsRepository from '@/repositories/CreditsRepository.js';
 import UserAccountsRepository from '@/repositories/UserAccountsRepository.js';
@@ -106,7 +106,7 @@ export class CreditsService {
       nro_cuota: plan.nro_cuota,
       importe_cuota: plan.importe,
       fecha_vencimiento: plan.fecha_vencimiento,
-      estado: 'pendiente' as const,
+      estado: InstallmentStatus.PENDING,
       fecha_pago: null,
     }));
 
@@ -154,7 +154,7 @@ export class CreditsService {
       nro_cuota: plan.nro_cuota,
       importe_cuota: plan.importe,
       fecha_vencimiento: plan.fecha_vencimiento,
-      estado: 'pendiente' as const,
+      estado: InstallmentStatus.PENDING,
       fecha_pago: null,
     }));
 

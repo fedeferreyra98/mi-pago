@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { verifyToken, optionalAuth } from '@/middleware/authMiddleware.js';
+import { verifyToken, optionalAuth, generateToken } from '@/middleware/authMiddleware.js';
 import UserAccountsHandler from '@/handlers/UserAccountsHandler.js';
 import CreditsHandler from '@/handlers/CreditsHandler.js';
 import TransferHandler from '@/handlers/TransferHandler.js';
@@ -95,7 +95,6 @@ router.post('/auth/login', (req, res) => {
   }
 
   // Mock login - generate token
-  const { generateToken } = await import('@/middleware/authMiddleware.js');
   const token = generateToken(usuario_id);
 
   res.json({
@@ -117,7 +116,6 @@ router.post('/auth/register', (req, res) => {
   }
 
   // Mock register - generate token
-  const { generateToken } = await import('@/middleware/authMiddleware.js');
   const token = generateToken(usuario_id);
 
   res.json({

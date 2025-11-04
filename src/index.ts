@@ -1,8 +1,8 @@
 import express from 'express';
 import cors from 'cors';
-import { config } from '@/config/config.js';
-import { errorHandler, notFoundHandler } from '@/middleware/errorMiddleware.js';
-import routes from '@/routes/index.js';
+import { config } from './config/config';
+import { errorHandler, notFoundHandler } from './middleware/errorMiddleware.js';
+import routes from './routes/index.js';
 
 const app = express();
 
