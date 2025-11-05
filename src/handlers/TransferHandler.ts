@@ -3,7 +3,9 @@ import UserAccountsService from '@/services/UserAccountsService.js';
 import CreditsService from '@/services/CreditsService.js';
 import BankingAPI from '@/services/BankingAPI.js';
 import TransfersService from '@/services/TransfersService.js';
+import TransfersRepository from '@/repositories/TransfersRepository.js';
 import { ValidationError } from '@/errors/AppError.js';
+import { ExternalTransferRequest, Transfer } from '@/types/index.js';
 
 export class TransferHandler {
   private userAccountsService = UserAccountsService;
@@ -463,6 +465,226 @@ export class TransferHandler {
         requiere_verificacion_adicional: requiere_verificacion,
         factores_riesgo: fraudRisks,
         puede_proceder: !requiere_verificacion,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/transfers/external/validate-cbu
+   * Validate external CBU/CVU before transfer
+   */
+  async validateExternalAccount(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { cuenta } = req.body;
+
+      if (!cuenta) {
+        throw new ValidationError('Missing required field: cuenta (CBU/CVU)');
+      }
+
+      const validation = this.bankingAPI.validateExternalAccount(cuenta);
+
+      res.json({
+        exito: validation.es_valido,
+        validacion: validation,
+        mensaje: validation.es_valido
+          ? `Cuenta válida - Banco: ${validation.banco || validation.alias}`
+          : validation.razon_invalido,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/transfers/external/execute
+   * Execute transfer to external CBU/CVU account
+   */
+  async executeExternalTransfer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { usuario_id, cbu_destino, alias_destino, monto_transferencia, referencia } = req.body;
+
+      if (!usuario_id || !cbu_destino || !monto_transferencia) {
+        throw new ValidationError(
+          'Missing required fields: usuario_id, cbu_destino, monto_transferencia'
+        );
+      }
+
+      if (monto_transferencia <= 0) {
+        throw new ValidationError('Transfer amount must be greater than 0');
+      }
+
+      // Check transfer limit
+      const isWithinLimit = await this.bankingAPI.validateTransferLimit(usuario_id, monto_transferencia);
+      if (!isWithinLimit) {
+        const limite = await this.userAccountsService.getTransferLimit(usuario_id);
+        throw new ValidationError(
+          `Transfer amount exceeds limit of $${limite}. Complete KYC to increase limit.`
+        );
+      }
+
+      // Validate CBU/CVU
+      const validation = this.bankingAPI.validateExternalAccount(cbu_destino);
+      if (!validation.es_valido) {
+        res.status(400).json({
+          exito: false,
+          error: validation.razon_invalido,
+          codigo: 'INVALID_ACCOUNT',
+        });
+        return;
+      }
+
+      // Perform fraud check
+      const fraudCheck = await this.performFraudCheckInternal(usuario_id, monto_transferencia, cbu_destino);
+      if (fraudCheck.requiere_verificacion) {
+        res.status(403).json({
+          exito: false,
+          error: 'Transfer requires additional verification due to fraud risk',
+          codigo: 'FRAUD_RISK',
+          riesgos: fraudCheck.factores_riesgo,
+        });
+        return;
+      }
+
+      // Execute external transfer
+      const transferRequest: ExternalTransferRequest = {
+        usuario_id,
+        cbu_destino: validation.cbu,
+        alias_destino,
+        monto: monto_transferencia,
+        referencia,
+      };
+
+      const result = await this.bankingAPI.executeExternalTransfer(transferRequest);
+
+      if (result.exito) {
+        // Save transfer record to database
+        await TransfersRepository.createTransfer({
+          id_transferencia: result.id_transferencia,
+          usuario_id_origen: usuario_id,
+          cbu_destino: result.cbu_destino,
+          monto: result.monto,
+          referencia: referencia || '',
+          estado: result.estado,
+          fecha_creacion: result.fecha_transaccion,
+        } as Omit<Transfer, 'fecha_acreditacion' | 'fecha_actualizacion'>);
+
+        res.json({
+          exito: true,
+          transferencia: {
+            id_transferencia: result.id_transferencia,
+            transaccion_numero: result.transaccion_numero,
+            cbu_destino: result.cbu_destino,
+            monto: result.monto,
+            estado: result.estado,
+            fecha: result.fecha_transaccion,
+            comprobante: result.comprobante,
+          },
+          saldo_resultante: await this.userAccountsService.getBalance(usuario_id),
+        });
+      } else {
+        throw new Error(result.razon_fallo);
+      }
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * Private method for fraud checking
+   */
+  private async performFraudCheckInternal(
+    usuario_id: string,
+    monto: number,
+    cuenta_destino: string
+  ): Promise<{
+    requiere_verificacion: boolean;
+    factores_riesgo: any[];
+  }> {
+    const fraudRisks = [];
+    const account = await this.userAccountsService.getUserAccount(usuario_id);
+    const accountAge = Math.floor(
+      (Date.now() - new Date(account.fecha_registro).getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    if (accountAge < 30 && monto > 5000) {
+      fraudRisks.push({
+        tipo: 'cuenta_nueva_monto_alto',
+        severity: 'media',
+        descripcion: 'Cuenta nueva con transferencia de monto alto',
+      });
+    }
+
+    const dailyTransfers = await this.transfersService.getDailyTransferCount(usuario_id);
+    if (dailyTransfers > 10) {
+      fraudRisks.push({
+        tipo: 'transferencias_frecuentes',
+        severity: 'alta',
+        descripcion: 'Múltiples transferencias en poco tiempo',
+      });
+    }
+
+    if (account.historial_mora) {
+      fraudRisks.push({
+        tipo: 'historial_mora',
+        severity: 'alta',
+        descripcion: 'Cuenta con historial de mora',
+      });
+    }
+
+    return {
+      requiere_verificacion: fraudRisks.some(r => r.severity === 'alta'),
+      factores_riesgo: fraudRisks,
+    };
+  }
+
+  /**
+   * POST /api/transfers/external/preview
+   * Preview external transfer (validate without executing)
+   */
+  async previewExternalTransfer(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { usuario_id, cbu_destino, monto_transferencia } = req.body;
+
+      if (!usuario_id || !cbu_destino || !monto_transferencia) {
+        throw new ValidationError(
+          'Missing required fields: usuario_id, cbu_destino, monto_transferencia'
+        );
+      }
+
+      if (monto_transferencia <= 0) {
+        throw new ValidationError('Transfer amount must be greater than 0');
+      }
+
+      // Check if account is valid
+      const validation = this.bankingAPI.validateExternalAccount(cbu_destino);
+      if (!validation.es_valido) {
+        throw new ValidationError(validation.razon_invalido || 'Invalid account format');
+      }
+
+      // Get current balance
+      const saldo = await this.userAccountsService.getBalance(usuario_id);
+      const isWithinLimit = await this.bankingAPI.validateTransferLimit(usuario_id, monto_transferencia);
+
+      // Perform fraud check
+      const fraudCheck = await this.performFraudCheckInternal(usuario_id, monto_transferencia, cbu_destino);
+
+      res.json({
+        exito: true,
+        preview: {
+          usuario_id,
+          cbu_destino: validation.cbu,
+          banco_destino: validation.banco || validation.alias,
+          monto_transferencia,
+          saldo_actual: saldo,
+          saldo_posterior: saldo - monto_transferencia,
+          dentro_del_limite: isWithinLimit,
+          riesgo_fraude: fraudCheck.factores_riesgo.length > 0 ? 'alto' : 'bajo',
+          requiere_verificacion: fraudCheck.requiere_verificacion,
+          factores_riesgo: fraudCheck.factores_riesgo,
+          puede_proceder: isWithinLimit && !fraudCheck.requiere_verificacion,
+        },
       });
     } catch (error) {
       next(error);

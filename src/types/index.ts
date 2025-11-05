@@ -49,12 +49,19 @@ export interface Installment {
 
 export interface UserAccount {
   usuario_id: string;
+  email?: string;
+  password_hash?: string;
   kyc_completo: boolean;
+  kyc_status?: KYCStatus;
   fecha_registro: Date;
   saldo_disponible: number;
   ingresos_declarados: number | null;
   historial_mora: boolean;
   score_externo: number | null;
+  bloqueado: boolean;
+  intentos_fallidos: number;
+  fecha_proximo_intento?: Date;
+  limite_transferencia?: number;
   fecha_actualizacion: Date;
 }
 
@@ -177,4 +184,75 @@ export interface ComprobanteDetail {
   estado: TransferStatus;
   compartible: boolean;
   descargable: boolean;
+}
+
+// Account Security & KYC Related Interfaces
+export enum KYCStatus {
+  PENDIENTE = 'pendiente',
+  EN_REVISION = 'en_revision',
+  APROBADO = 'aprobado',
+  RECHAZADO = 'rechazado',
+}
+
+export interface KYCDocument {
+  id_documento: string;
+  usuario_id: string;
+  tipo_documento: 'dni' | 'selfie' | 'comprobante_domicilio';
+  url_documento: string;
+  fecha_carga: Date;
+  estado_validacion: KYCStatus;
+  motivo_rechazo?: string;
+  fecha_validacion?: Date;
+}
+
+export interface PasswordResetToken {
+  token: string;
+  usuario_id: string;
+  fecha_creacion: Date;
+  fecha_vencimiento: Date;
+  utilizado: boolean;
+  fecha_utilizacion?: Date;
+}
+
+export interface AccountLockStatus {
+  usuario_id: string;
+  bloqueado: boolean;
+  razon_bloqueo?: string;
+  fecha_bloqueo?: Date;
+  intentos_fallidos: number;
+  fecha_proximo_intento?: Date;
+}
+
+export interface CBUValidationResult {
+  es_valido: boolean;
+  banco?: string;
+  alias?: string;
+  cbu: string;
+  activo: boolean;
+  razon_invalido?: string;
+}
+
+export interface ExternalTransferRequest {
+  usuario_id: string;
+  cbu_destino: string;
+  alias_destino?: string;
+  monto: number;
+  referencia?: string;
+}
+
+export interface ExternalTransferResult {
+  exito: boolean;
+  id_transferencia: string;
+  cbu_origen: string;
+  cbu_destino: string;
+  monto: number;
+  transaccion_numero: string;
+  fecha_transaccion: Date;
+  estado: TransferStatus;
+  razon_fallo?: string;
+  comprobante?: {
+    numero: string;
+    fecha: Date;
+    referencia?: string;
+  };
 }

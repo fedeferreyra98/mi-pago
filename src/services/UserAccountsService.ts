@@ -1,9 +1,39 @@
-import { UserAccount } from '@/types/index.js';
+import { UserAccount, KYCDocument, KYCStatus, PasswordResetToken } from '@/types/index.js';
 import UserAccountsRepository from '@/repositories/UserAccountsRepository.js';
-import { NotFoundError, ValidationError } from '@/errors/AppError.js';
+import { NotFoundError, ValidationError, UnauthorizedError } from '@/errors/AppError.js';
+import crypto from 'crypto';
 
 export class UserAccountsService {
   private userAccountsRepository = UserAccountsRepository;
+
+  /**
+   * Hash password using SHA-256 with salt
+   * In production, use bcrypt instead
+   */
+  private hashPassword(password: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto
+      .pbkdf2Sync(password, salt, 1000, 64, 'sha512')
+      .toString('hex');
+    return `${salt}.${hash}`;
+  }
+
+  /**
+   * Verify password against hash
+   */
+  private verifyPassword(password: string, passwordHash: string): boolean {
+    try {
+      const [salt, hash] = passwordHash.split('.');
+      if (!salt || !hash) return false;
+
+      const hashVerify = crypto
+        .pbkdf2Sync(password, salt, 1000, 64, 'sha512')
+        .toString('hex');
+      return hash === hashVerify;
+    } catch (error) {
+      return false;
+    }
+  }
 
   async getUserAccount(userId: string): Promise<UserAccount> {
     const account = await this.userAccountsRepository.findByUserId(userId);
@@ -28,6 +58,8 @@ export class UserAccountsService {
       ingresos_declarados: null,
       historial_mora: false,
       score_externo: null,
+      bloqueado: false,
+      intentos_fallidos: 0,
     });
   }
 
@@ -123,6 +155,157 @@ export class UserAccountsService {
       hasDefaultHistory: account.historial_mora,
       balance: account.saldo_disponible,
     };
+  }
+
+  // Password and Security Methods
+  async validateCredentials(userId: string, password: string): Promise<boolean> {
+    try {
+      const isBlocked = await this.userAccountsRepository.isAccountBlocked(userId);
+      if (isBlocked) {
+        throw new ValidationError('Account is temporarily locked. Try again later.');
+      }
+
+      const passwordHash = await this.userAccountsRepository.getPasswordHash(userId);
+      if (!passwordHash) {
+        throw new NotFoundError('Password not found for user');
+      }
+
+      const isValid = this.verifyPassword(password, passwordHash);
+
+      if (!isValid) {
+        // Record failed login attempt
+        await this.userAccountsRepository.recordFailedLoginAttempt(userId);
+        throw new UnauthorizedError('Invalid credentials');
+      }
+
+      // Reset failed attempts on successful login
+      await this.userAccountsRepository.resetFailedLoginAttempts(userId);
+      return true;
+    } catch (error) {
+      if (error instanceof UnauthorizedError) throw error;
+      if (error instanceof ValidationError) throw error;
+      throw error;
+    }
+  }
+
+  async updatePassword(userId: string, newPassword: string): Promise<UserAccount> {
+    if (!newPassword || newPassword.length < 8) {
+      throw new ValidationError('Password must be at least 8 characters long');
+    }
+
+    const passwordHash = this.hashPassword(newPassword);
+    return this.userAccountsRepository.updatePassword(userId, passwordHash);
+  }
+
+  async updatePasswordWithResetToken(token: string, newPassword: string): Promise<UserAccount> {
+    if (!newPassword || newPassword.length < 8) {
+      throw new ValidationError('Password must be at least 8 characters long');
+    }
+
+    const isValidToken = await this.userAccountsRepository.validatePasswordResetToken(token);
+    if (!isValidToken) {
+      throw new ValidationError('Invalid or expired password reset token');
+    }
+
+    const userId = await this.userAccountsRepository.getUserIdFromResetToken(token);
+    const passwordHash = this.hashPassword(newPassword);
+
+    await this.userAccountsRepository.markResetTokenAsUsed(token);
+    return this.userAccountsRepository.updatePassword(userId, passwordHash);
+  }
+
+  async createPasswordResetToken(userId: string): Promise<PasswordResetToken> {
+    // Verify user exists
+    await this.getUserAccount(userId);
+    return this.userAccountsRepository.createPasswordResetToken(userId);
+  }
+
+  async blockAccount(userId: string): Promise<UserAccount> {
+    return this.userAccountsRepository.blockAccount(userId);
+  }
+
+  async unblockAccount(userId: string): Promise<UserAccount> {
+    return this.userAccountsRepository.unblockAccount(userId);
+  }
+
+  async isAccountBlocked(userId: string): Promise<boolean> {
+    return this.userAccountsRepository.isAccountBlocked(userId);
+  }
+
+  // KYC Document Methods
+  async uploadKYCDocument(
+    userId: string,
+    tipoDocumento: 'dni' | 'selfie' | 'comprobante_domicilio',
+    urlDocumento: string
+  ): Promise<KYCDocument> {
+    // Verify user exists
+    await this.getUserAccount(userId);
+
+    // Validate URL format
+    if (!urlDocumento || typeof urlDocumento !== 'string') {
+      throw new ValidationError('Invalid document URL');
+    }
+
+    const documento: KYCDocument = {
+      id_documento: crypto.randomUUID(),
+      usuario_id: userId,
+      tipo_documento: tipoDocumento,
+      url_documento: urlDocumento,
+      fecha_carga: new Date(),
+      estado_validacion: KYCStatus.PENDIENTE,
+    };
+
+    return this.userAccountsRepository.storeKYCDocument(documento);
+  }
+
+  async getKYCDocuments(userId: string): Promise<KYCDocument[]> {
+    // Verify user exists
+    await this.getUserAccount(userId);
+    return this.userAccountsRepository.getKYCDocuments(userId);
+  }
+
+  async approveKYC(userId: string): Promise<UserAccount> {
+    // Verify user has uploaded required documents
+    const documentos = await this.getKYCDocuments(userId);
+    const hasDNI = documentos.some((d) => d.tipo_documento === 'dni');
+    const hasSelfie = documentos.some((d) => d.tipo_documento === 'selfie');
+
+    if (!hasDNI || !hasSelfie) {
+      throw new ValidationError('User must upload DNI and selfie photos for KYC approval');
+    }
+
+    const account = await this.userAccountsRepository.updateKYCStatus(userId, KYCStatus.APROBADO);
+
+    // Update transfer limits for KYC-approved users
+    await this.userAccountsRepository.updateTransferLimit(userId, 50000);
+
+    return account;
+  }
+
+  async rejectKYC(userId: string, motivo: string): Promise<UserAccount> {
+    if (!motivo || motivo.trim() === '') {
+      throw new ValidationError('Rejection reason is required');
+    }
+
+    return this.userAccountsRepository.updateKYCStatus(userId, KYCStatus.RECHAZADO, motivo);
+  }
+
+  async getKYCStatus(userId: string): Promise<KYCStatus | null> {
+    // Verify user exists
+    await this.getUserAccount(userId);
+    return this.userAccountsRepository.getKYCStatus(userId);
+  }
+
+  async updateTransferLimit(userId: string, limite: number): Promise<UserAccount> {
+    if (limite <= 0) {
+      throw new ValidationError('Transfer limit must be greater than 0');
+    }
+
+    return this.userAccountsRepository.updateTransferLimit(userId, limite);
+  }
+
+  async getTransferLimit(userId: string): Promise<number> {
+    return this.userAccountsRepository.getTransferLimit(userId);
   }
 }
 
