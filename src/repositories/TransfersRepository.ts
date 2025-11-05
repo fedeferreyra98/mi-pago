@@ -216,6 +216,33 @@ export class TransfersRepository {
       throw new DatabaseError(`Failed to get comprobantes for user: ${error}`);
     }
   }
+
+  /**
+   * Get transfers for a user on a specific date
+   */
+  async getTransfersByUserIdAndDate(userId: string, date: Date): Promise<Transfer[]> {
+    try {
+      // Get start of day in UTC
+      const startOfDay = new Date(date);
+      startOfDay.setUTCHours(0, 0, 0, 0);
+
+      // Get end of day in UTC
+      const endOfDay = new Date(date);
+      endOfDay.setUTCHours(23, 59, 59, 999);
+
+      const { data, error } = await supabaseAdmin
+        .from(this.transferTableName)
+        .select('*')
+        .eq('usuario_id_origen', userId)
+        .gte('fecha_creacion', startOfDay.toISOString())
+        .lte('fecha_creacion', endOfDay.toISOString());
+
+      if (error) throw error;
+      return data || [];
+    } catch (error) {
+      throw new DatabaseError(`Failed to get transfers for user and date: ${error}`);
+    }
+  }
 }
 
 export default new TransfersRepository();

@@ -3,8 +3,7 @@ import UserAccountsService from '@/services/UserAccountsService.js';
 import CreditsService from '@/services/CreditsService.js';
 import BankingAPI from '@/services/BankingAPI.js';
 import TransfersService from '@/services/TransfersService.js';
-import { CreditType } from '@/types/index.js';
-import { ValidationError, InsufficientFundsError } from '@/errors/AppError.js';
+import { ValidationError } from '@/errors/AppError.js';
 
 export class TransferHandler {
   private userAccountsService = UserAccountsService;
@@ -304,6 +303,166 @@ export class TransferHandler {
         total: comprobantes.length,
         limite: limitNum,
         offset: offsetNum,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * GET /api/transfers/limits/:usuario_id
+   * Get transfer limits for a user
+   */
+  async getTransferLimits(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { usuario_id } = req.params;
+
+      if (!usuario_id) {
+        throw new ValidationError('Missing required field: usuario_id');
+      }
+
+      const account = await this.userAccountsService.getUserAccount(usuario_id);
+
+      // Calculate transfer limits based on KYC status
+      const limite_actual = account.kyc_completo ? 50000 : 10000;
+
+      // Get today's transfer total
+      const usedToday = await this.transfersService.getDailyTransferTotal(usuario_id);
+      const disponible = Math.max(0, limite_actual - usedToday);
+
+      res.json({
+        exito: true,
+        usuario_id,
+        limite_actual,
+        usado_hoy: usedToday,
+        disponible,
+        kyc_completo: account.kyc_completo,
+        como_ampliar: account.kyc_completo ? null : 'kyc',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/transfers/check-limits
+   * Check transfer limits before execution (preview)
+   */
+  async checkLimitsPreview(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { usuario_id, monto_transferencia } = req.body;
+
+      if (!usuario_id || !monto_transferencia) {
+        throw new ValidationError('Missing required fields: usuario_id, monto_transferencia');
+      }
+
+      if (monto_transferencia <= 0) {
+        throw new ValidationError('Transfer amount must be greater than 0');
+      }
+
+      const account = await this.userAccountsService.getUserAccount(usuario_id);
+      const limite_actual = account.kyc_completo ? 50000 : 10000;
+      const usedToday = await this.transfersService.getDailyTransferTotal(usuario_id);
+      const disponible = Math.max(0, limite_actual - usedToday);
+
+      // Check if transfer amount exceeds limit
+      if (monto_transferencia > disponible) {
+        res.json({
+          exito: false,
+          puede_transferir: false,
+          code: 'LIMITE_EXCEDIDO',
+          error: `Excediste tu límite diario de $${limite_actual}. Completá tu KYC para ampliarlo.`,
+          data: {
+            limite_actual,
+            usado_hoy: usedToday,
+            disponible,
+            monto_solicitado: monto_transferencia,
+            exceso: monto_transferencia - disponible,
+            como_ampliar: account.kyc_completo ? null : 'kyc',
+          },
+        });
+      } else {
+        res.json({
+          exito: true,
+          puede_transferir: true,
+          data: {
+            limite_actual,
+            usado_hoy: usedToday,
+            disponible,
+            monto_solicitado: monto_transferencia,
+            kyc_completo: account.kyc_completo,
+          },
+        });
+      }
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/transfers/fraud-check
+   * Perform fraud check on transfer
+   */
+  async performFraudCheck(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { usuario_id, monto_transferencia, cuenta_destino } = req.body;
+
+      if (!usuario_id || !monto_transferencia || !cuenta_destino) {
+        throw new ValidationError('Missing required fields: usuario_id, monto_transferencia, cuenta_destino');
+      }
+
+      if (monto_transferencia <= 0) {
+        throw new ValidationError('Transfer amount must be greater than 0');
+      }
+
+      // Perform basic fraud checks
+      const fraudRisks = [];
+
+      // Check 1: Unusual transfer amount
+      const account = await this.userAccountsService.getUserAccount(usuario_id);
+      const accountAge = Math.floor(
+        (Date.now() - new Date(account.fecha_registro).getTime()) / (1000 * 60 * 60 * 24)
+      );
+
+      if (accountAge < 30 && monto_transferencia > 5000) {
+        fraudRisks.push({
+          tipo: 'cuenta_nueva_monto_alto',
+          severity: 'media',
+          descripcion: 'Cuenta nueva con transferencia de monto alto',
+        });
+      }
+
+      // Check 2: High frequency transfers (mock check)
+      const dailyTransfers = await this.transfersService.getDailyTransferCount(usuario_id);
+      if (dailyTransfers > 10) {
+        fraudRisks.push({
+          tipo: 'transferencias_frecuentes',
+          severity: 'alta',
+          descripcion: 'Múltiples transferencias en poco tiempo',
+        });
+      }
+
+      // Check 3: Account status
+      if (account.historial_mora) {
+        fraudRisks.push({
+          tipo: 'historial_mora',
+          severity: 'alta',
+          descripcion: 'Cuenta con historial de mora',
+        });
+      }
+
+      const riesgo_fraude = fraudRisks.length > 0 ? 'alto' : 'bajo';
+      const requiere_verificacion = fraudRisks.some(r => r.severity === 'alta');
+
+      res.json({
+        exito: true,
+        usuario_id,
+        monto_transferencia,
+        cuenta_destino: cuenta_destino.substring(0, 4) + '****' + cuenta_destino.substring(cuenta_destino.length - 2),
+        riesgo_fraude,
+        requiere_verificacion_adicional: requiere_verificacion,
+        factores_riesgo: fraudRisks,
+        puede_proceder: !requiere_verificacion,
       });
     } catch (error) {
       next(error);

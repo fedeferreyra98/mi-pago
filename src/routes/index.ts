@@ -81,6 +81,14 @@ router.post(
   TransferHandler.confirmTransferWithCredit.bind(TransferHandler)
 );
 
+// Transfer limits and fraud checks
+router.get('/transfers/limits/:usuario_id', verifyToken,
+  (req, res) => TransferHandler.getTransferLimits.bind(TransferHandler)(req, res, (err) => { throw err; }));
+router.post('/transfers/check-limits', verifyToken,
+  (req, res) => TransferHandler.checkLimitsPreview.bind(TransferHandler)(req, res, (err) => { throw err; }));
+router.post('/transfers/fraud-check', verifyToken,
+  (req, res) => TransferHandler.performFraudCheck.bind(TransferHandler)(req, res, (err) => { throw err; }));
+
 // Transfer receipts (comprobantes)
 router.get('/transfers/:id_transferencia', TransferHandler.getTransferDetail.bind(TransferHandler));
 router.get(

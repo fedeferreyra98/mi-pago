@@ -276,6 +276,24 @@ export class TransfersService {
   ): Promise<Comprobante[]> {
     return this.transfersRepository.getComprobantesByUserId(usuarioId, limit, offset);
   }
+
+  /**
+   * Get total transfer amount for today for a user
+   */
+  async getDailyTransferTotal(usuarioId: string): Promise<number> {
+    const transfers = await this.transfersRepository.getTransfersByUserIdAndDate(usuarioId, new Date());
+    return transfers
+      .filter(transfer => transfer.estado === TransferStatus.ACREDITADA)
+      .reduce((sum, transfer) => sum + transfer.monto, 0);
+  }
+
+  /**
+   * Get count of transfers made today for a user
+   */
+  async getDailyTransferCount(usuarioId: string): Promise<number> {
+    const transfers = await this.transfersRepository.getTransfersByUserIdAndDate(usuarioId, new Date());
+    return transfers.filter(transfer => transfer.estado === TransferStatus.ACREDITADA).length;
+  }
 }
 
 export default new TransfersService();

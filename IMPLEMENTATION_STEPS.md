@@ -19,7 +19,7 @@ This document details the implementation steps for 8 user stories covering trans
 
 ### Acceptance Criteria
 - Reject transfers exceeding daily/monthly limits
-- Apply fraud checks (velocity, new device)
+- Apply fraud checks (velocity)
 - Block operation and suggest KYC/account age improvement
 
 ### Implementation Steps
@@ -49,18 +49,6 @@ CREATE TABLE fraud_checks (
   verificacion_requerida BOOLEAN DEFAULT true,
   resultado_verificacion VARCHAR(50), -- 'aprobado', 'bloqueado', 'pendiente'
   fecha_creacion TIMESTAMP DEFAULT NOW()
-);
-
--- user_devices table (track device fingerprints)
-CREATE TABLE user_devices (
-  id_device UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  usuario_id UUID NOT NULL REFERENCES user_accounts(usuario_id),
-  device_fingerprint VARCHAR(255) NOT NULL,
-  nombre_dispositivo VARCHAR(100),
-  primera_vez TIMESTAMP NOT NULL,
-  ultima_actividad TIMESTAMP DEFAULT NOW(),
-  es_conocido BOOLEAN DEFAULT false,
-  UNIQUE(usuario_id, device_fingerprint)
 );
 
 -- daily_transfer_logs table (for tracking transfer velocity)
@@ -129,8 +117,7 @@ interface FraudCheckResult {
 }
 ```
 
-#### 3. Create LimitsRepository
-**File:** `src/repositories/LimitsRepository.ts`
+#### 3. Add logic of Fraud prevention to CreditValidator (src/services/CreditsValidator.ts)
 
 Methods:
 - `getLimitsByProfile(profile)`: Get limits configuration
@@ -138,22 +125,6 @@ Methods:
 - `getMonthlyTransferTotal(userId, year, month)`: Sum transfers for month
 - `logTransfer(userId, monto, fecha)`: Record transfer for tracking
 - `updateDailyLog(userId, date, monto, transactionCount)`: Update daily aggregate
-
-#### 4. Create FraudCheckRepository
-**File:** `src/repositories/FraudCheckRepository.ts`
-
-Methods:
-- `recordDeviceFingerprint(userId, deviceFingerprint, nombre)`: Register device
-- `isKnownDevice(userId, deviceFingerprint)`: Check if device previously used
-- `recordFraudCheck(check)`: Save fraud alert
-- `getFraudChecksByTransferId(transferId)`: Get checks for transfer
-- `getTransferVelocity(userId, hoursBack)`: Count transfers in time window
-- `checkRecentLocationChange(userId)`: Detect location anomalies
-
-#### 5. Create FraudCheckService
-**File:** `src/services/FraudCheckService.ts`
-
-Methods:
 - `checkTransferLimits(userId, monto, tipoTransferencia)`: Validate against limits
   - Get user's profile based on KYC status and account age
   - Check daily limit
@@ -180,7 +151,7 @@ Methods:
 
 - `calculateRiskScore(fraudChecks)`: Aggregate scores from multiple checks
 
-#### 6. Update TransferService
+#### 4. Update TransferService
 **File:** `src/services/TransfersService.ts` (existing)
 
 Modify `executeTransfer()` to:
@@ -191,7 +162,7 @@ Modify `executeTransfer()` to:
 5. If risk = BLOCKED, throw `FraudDetectedError`
 6. If approved, proceed with transfer and log in daily_transfer_logs
 
-#### 7. Create/Update Handler
+#### 5. Create/Update Handler
 **File:** `src/handlers/TransferHandler.ts` (existing)
 
 Update `executeTransfer()` endpoint response:
@@ -209,7 +180,7 @@ Update `executeTransfer()` endpoint response:
 }
 ```
 
-#### 8. Add New Endpoints
+#### 6. Add New Endpoints
 **File:** `src/routes/index.ts`
 
 ```typescript
